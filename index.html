@@ -123,7 +123,6 @@
         <input id="importFile" type="file" accept="application/json" />
         <button id="importBtn">Importa</button>
         <button id="resetBtn" class="danger">Reset</button>
-        <button id="downloadHtmlBtn" class="secondary">Scarica HTML con dati</button>
       </div>
       <p class="hint">I dati sono salvati automaticamente sul dispositivo (LocalStorage).</p>
     </div>
@@ -136,15 +135,6 @@
       <button id="shareBtn">Condividi riepilogo</button>
     </div>
   </div>
-
-  <!--DATA_START-->
-  <script id="embedded-data" type="application/json">
-  {
-    "roommates": ["faby", "eve", "mary"],
-    "expenses": []
-  }
-  </script>
-  <!--DATA_END-->
 
   <script>
     const CURRENCY = new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR'});
@@ -163,33 +153,12 @@
     }
 
     function load(){
-      let loaded = false;
-      const tag = document.getElementById('embedded-data');
-      if(tag && tag.textContent && tag.textContent.trim()){
-        try{
-          const data = JSON.parse(tag.textContent);
-          if(Array.isArray(data.roommates) && Array.isArray(data.expenses)){
-            state.roommates = data.roommates;
-            state.expenses = data.expenses;
-            loaded = true;
-          }
-        }catch(e){ console.warn('Parse embedded data', e); }
-      }
-      if(!loaded){
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if(raw){
-          try{ const data = JSON.parse(raw);
-            state.roommates = Array.isArray(data.roommates) ? data.roommates : [];
-            state.expenses = Array.isArray(data.expenses) ? data.expenses : [];
-            loaded = true;
-          }catch(e){ console.warn('Parse storage',e) }
-        }
-      }
-      if(state.roommates.length === 0){
-        state.roommates = ['faby','eve','mary'];
-      }
-      save();
-    }catch(e){ console.warn('Parse storage',e) }
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw){
+        try{ const data = JSON.parse(raw);
+          state.roommates = Array.isArray(data.roommates) ? data.roommates : [];
+          state.expenses = Array.isArray(data.expenses) ? data.expenses : [];
+        }catch(e){ console.warn('Parse storage',e) }
       }
       if(state.roommates.length === 0){
         state.roommates = ['faby','eve','mary'];
@@ -507,24 +476,6 @@
       save();
       renderAll();
     }
-    // Salva l'HTML auto-contenuto con i dati incorporati
-    function updateEmbeddedDataTag(){
-      const tag = document.getElementById('embedded-data');
-      if(!tag) return;
-      tag.textContent = JSON.stringify({roommates: state.roommates, expenses: state.expenses}, null, 2);
-    }
-    function downloadSelfWithData(){
-      updateEmbeddedDataTag();
-      const html = '<!DOCTYPE html>
-' + document.documentElement.outerHTML;
-      const blob = new Blob([html], {type:'text/html'});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'divisione-spese-embeddato.html';
-      a.click();
-      URL.revokeObjectURL(a.href);
-      toast('HTML con dati scaricato ✓');
-    }
 
     // Event listeners
     document.addEventListener('DOMContentLoaded', () => {
@@ -546,9 +497,6 @@
       el('shareBtn').addEventListener('click', shareSummary);
       el('addSample').addEventListener('click', addSample);
       el('recomputeBtn').addEventListener('click', renderAll);
-
-      // download HTML con dati incorporati
-      el('downloadHtmlBtn').addEventListener('click', downloadSelfWithData);
     });
   </script>
 </body>
