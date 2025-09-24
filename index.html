@@ -142,7 +142,12 @@
     // ========== UTILS ==========
     const CURRENCY = new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR'});
     const el = id => document.getElementById(id);
-    function escapeHtml(str){ return (str||'').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\\'':'&#39;'})[c]); }
+   function escapeHtml(str){
+  return (str ?? '').replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;'}[c]
+  ));
+}
+
     function parseAmount(v){ if(typeof v!=='string') return NaN; v=v.replace(/\\s+/g,'').replace(',', '.'); const num=parseFloat(v); return Number.isFinite(num)?Math.round(num*100)/100:NaN; }
     function round2(x){ return Math.round(x*100)/100; }
     function toast(msg){
