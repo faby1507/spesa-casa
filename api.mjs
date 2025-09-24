@@ -1,10 +1,12 @@
-// netlify/functions/api.js  (ESM)
+// api.mjs (ESM) — Netlify Function alla radice
 import { neon } from '@neondatabase/serverless';
 
-// Connessione
-const sql = neon(process.env.DATABASE_URL);
+// Usa la variabile che Netlify ti ha dato per Neon
+const conn = process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL;
+if (!conn) throw new Error('Missing NETLIFY_DATABASE_URL');
+const sql = neon(conn);
 
-// Inizializzazione schema "on first call"
+// Crea tabelle se non esistono
 let initialized = false;
 async function ensureSchema() {
   if (initialized) return;
@@ -18,8 +20,8 @@ async function ensureSchema() {
     create table if not exists expenses (
       id bigserial primary key,
       household text not null,
-      payer text not null,          -- nome coinquilina
-      name text not null,           -- nome spesa
+      payer text not null,
+      name text not null,
       amount numeric(12,2) not null,
       created_at timestamptz not null default now()
     );
@@ -38,7 +40,7 @@ export default async (req, context) => {
   await ensureSchema();
   const url = new URL(req.url);
   const hid = url.searchParams.get('hid') || 'default';
-  const splat = context.params?.splat || ''; // es. "state", "expense-add", ...
+  const splat = context.params?.splat || ''; // "state", "expense-add", ...
 
   // GET /api/state?hid=...
   if (req.method === 'GET' && splat === 'state') {
@@ -57,7 +59,7 @@ export default async (req, context) => {
     });
   }
 
-  // Tutto il resto via POST JSON
+  // POST mutazioni
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}));
 
@@ -75,12 +77,10 @@ export default async (req, context) => {
     if (splat === 'roommate-rename') {
       const { oldName, newName } = body;
       if (!oldName || !newName) return json({ error: 'oldName/newName required' }, 400);
-      // rinomina in roommates
       await sql/*sql*/`
         update roommates set name = ${newName}
         where household = ${hid} and name = ${oldName}
       `;
-      // aggiorna anche le spese esistenti
       await sql/*sql*/`
         update expenses set payer = ${newName}
         where household = ${hid} and payer = ${oldName}
@@ -91,7 +91,6 @@ export default async (req, context) => {
     if (splat === 'roommate-remove') {
       const { name } = body;
       if (!name) return json({ error: 'name required' }, 400);
-      // opzionale: non tocchiamo le spese storiche
       await sql/*sql*/`
         delete from roommates where household = ${hid} and name = ${name}
       `;
@@ -101,7 +100,6 @@ export default async (req, context) => {
     if (splat === 'expense-add') {
       const { payer, name, amount } = body;
       if (!payer || !name || !(amount > 0)) return json({ error: 'invalid expense' }, 400);
-      // assicurati che la coinquilina esista
       await sql/*sql*/`
         insert into roommates (household, name)
         values (${hid}, ${payer})
@@ -118,12 +116,13 @@ export default async (req, context) => {
     if (splat === 'expense-delete') {
       const { id } = body;
       if (!id) return json({ error: 'id required' }, 400);
-      await sql/*sql*/`delete from expenses where household = ${hid} and id = ${id}`;
+      await sql/*sql*/`
+        delete from expenses where household = ${hid} and id = ${id}
+      `;
       return json({ ok: true });
     }
   }
 
-  // OPTIONS preflight
   if (req.method === 'OPTIONS') return new Response('', { status: 204 });
   return new Response('Not Found', { status: 404 });
 };
