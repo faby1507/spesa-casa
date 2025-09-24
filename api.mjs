@@ -1,7 +1,6 @@
-// api.mjs (ESM) — Netlify Function alla radice
+// api.mjs — Netlify Function (ESM) alla radice
 import { neon } from '@neondatabase/serverless';
 
-// Usa la variabile che Netlify ti ha dato per Neon
 const conn = process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL;
 if (!conn) throw new Error('Missing NETLIFY_DATABASE_URL');
 const sql = neon(conn);
@@ -29,7 +28,7 @@ async function ensureSchema() {
   initialized = true;
 }
 
-function json(data, status = 200) {
+function j(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json' }
@@ -38,11 +37,17 @@ function json(data, status = 200) {
 
 export default async (req, context) => {
   await ensureSchema();
+
   const url = new URL(req.url);
   const hid = url.searchParams.get('hid') || 'default';
   const splat = context.params?.splat || ''; // "state", "expense-add", ...
 
-  // GET /api/state?hid=...
+  // --- diagnostica rapida
+  if (req.method === 'GET' && (splat === 'ping' || splat === '')) {
+    return j({ ok: true, hid, message: 'Function up & DB ready' });
+  }
+
+  // --- lettura stato
   if (req.method === 'GET' && splat === 'state') {
     const roommates = await sql/*sql*/`
       select name from roommates where household = ${hid} order by name asc
@@ -53,30 +58,26 @@ export default async (req, context) => {
       where household = ${hid}
       order by id asc
     `;
-    return json({
-      roommates: roommates.map(r => r.name),
-      expenses
-    });
+    return j({ roommates: roommates.map(r => r.name), expenses });
   }
 
-  // POST mutazioni
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}));
 
     if (splat === 'roommate-add') {
       const { name } = body;
-      if (!name) return json({ error: 'name required' }, 400);
+      if (!name) return j({ error: 'name required' }, 400);
       await sql/*sql*/`
         insert into roommates (household, name)
         values (${hid}, ${name})
         on conflict (household, name) do nothing
       `;
-      return json({ ok: true });
+      return j({ ok: true });
     }
 
     if (splat === 'roommate-rename') {
       const { oldName, newName } = body;
-      if (!oldName || !newName) return json({ error: 'oldName/newName required' }, 400);
+      if (!oldName || !newName) return j({ error: 'oldName/newName required' }, 400);
       await sql/*sql*/`
         update roommates set name = ${newName}
         where household = ${hid} and name = ${oldName}
@@ -85,21 +86,21 @@ export default async (req, context) => {
         update expenses set payer = ${newName}
         where household = ${hid} and payer = ${oldName}
       `;
-      return json({ ok: true });
+      return j({ ok: true });
     }
 
     if (splat === 'roommate-remove') {
       const { name } = body;
-      if (!name) return json({ error: 'name required' }, 400);
+      if (!name) return j({ error: 'name required' }, 400);
       await sql/*sql*/`
         delete from roommates where household = ${hid} and name = ${name}
       `;
-      return json({ ok: true });
+      return j({ ok: true });
     }
 
     if (splat === 'expense-add') {
       const { payer, name, amount } = body;
-      if (!payer || !name || !(amount > 0)) return json({ error: 'invalid expense' }, 400);
+      if (!payer || !name || !(amount > 0)) return j({ error: 'invalid expense' }, 400);
       await sql/*sql*/`
         insert into roommates (household, name)
         values (${hid}, ${payer})
@@ -110,16 +111,16 @@ export default async (req, context) => {
         values (${hid}, ${payer}, ${name}, ${amount})
         returning id
       `;
-      return json({ id: rows[0].id });
+      return j({ id: rows[0].id });
     }
 
     if (splat === 'expense-delete') {
       const { id } = body;
-      if (!id) return json({ error: 'id required' }, 400);
+      if (!id) return j({ error: 'id required' }, 400);
       await sql/*sql*/`
         delete from expenses where household = ${hid} and id = ${id}
       `;
-      return json({ ok: true });
+      return j({ ok: true });
     }
   }
 
