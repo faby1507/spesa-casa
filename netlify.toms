@@ -1,3 +1,9 @@
+import { neon } from '@neondatabase/serverless';
+
+const conn = process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL;
+if (!conn) throw new Error('Missing NETLIFY_DATABASE_URL');
+const sql = neon(conn);
+
 [build]
   functions = "netlify/functions"
 
