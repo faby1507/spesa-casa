@@ -5,7 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
   <title>Divisione spese casa</title>
   <style>
-    :root{ --bg:#0f172a; --card:#111827; --muted:#1f2937; --text:#e5e7eb; --accent:#22c55e; --danger:#ef4444; --warn:#f59e0b; --border:#374151; --soft:#94a3b8; }
+    :root{
+      --bg:#0f172a;           /* slate-900 */
+      --card:#111827;         /* gray-900 */
+      --muted:#1f2937;        /* gray-800 */
+      --text:#e5e7eb;         /* gray-200 */
+      --accent:#22c55e;       /* green-500 */
+      --danger:#ef4444;       /* red-500 */
+      --warn:#f59e0b;         /* amber-500 */
+      --border:#374151;       /* gray-700 */
+      --soft:#94a3b8;         /* slate-400 */
+    }
     *{box-sizing:border-box}
     html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
     .container{max-width:840px;margin:0 auto;padding:16px 16px 120px}
@@ -17,15 +27,15 @@
     .card h2{margin:0 0 12px 0;font-size:18px}
     .row{display:flex;gap:8px;flex-wrap:wrap}
     .row > *{flex:1 1 140px}
-    input,select,button{width:100%;padding:14px 12px;border-radius:12px;border:1px solid var(--border);background:#0b1220;color:#e5e7eb;font-size:16px}
+    input,select,button{width:100%;padding:14px 12px;border-radius:12px;border:1px solid var(--border);background:#0b1220;color:var(--text);font-size:16px}
     input::placeholder{color:#6b7280}
     button{background:var(--accent);border:0;color:#052e12;font-weight:700;cursor:pointer}
-    button.secondary{background:var(--muted);color:#e5e7eb;border:1px solid var(--border)}
+    button.secondary{background:var(--muted);color:var(--text);border:1px solid var(--border)}
     button.danger{background:var(--danger);color:white}
     button.warn{background:var(--warn);color:#1f1300}
     button.ghost{background:transparent;border:1px dashed var(--border);color:var(--soft)}
     .chips{display:flex;gap:8px;flex-wrap:wrap}
-    .chip{display:flex;align-items:center;gap:8px;background:var(--muted);border:1px solid var(--border);color:#e5e7eb;padding:8px 10px;border-radius:999px}
+    .chip{display:flex;align-items:center;gap:8px;background:var(--muted);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:999px}
     .chip input{width:110px;border-radius:8px;padding:6px 8px;background:#0b1220;border:1px solid var(--border)}
     .chip .x{background:transparent;border:none;color:#cbd5e1;font-weight:900;cursor:pointer;padding:0 4px}
     .list{border:1px solid var(--border);border-radius:12px;overflow:hidden}
@@ -49,7 +59,7 @@
   <header>
     <div class="bar">
       <h1>Divisione spese casa</h1>
-      <span class="badge" id="dbBadge">DB: …</span>
+      <span class="badge">Android · iOS</span>
     </div>
   </header>
 
@@ -114,7 +124,7 @@
         <button id="importBtn">Importa</button>
         <button id="resetBtn" class="danger">Reset</button>
       </div>
-      <p class="hint">I dati ufficiali stanno su Neon (tramite API Netlify). Export/Import sono solo copie locali.</p>
+      <p class="hint">I dati sono salvati automaticamente sul dispositivo (LocalStorage).</p>
     </div>
   </div>
 
@@ -127,158 +137,195 @@
   </div>
 
   <script>
-    // ========== CONFIG DINAMICA DELL'ENDPOINT ==========
-    let API_BASE = null;                // '/api' oppure '/.netlify/functions/api'
-    const HID = 'default';
-
-    async function detectApiBase(){
-      // 1) prova /api/ping
-      try { const r = await fetch('/api/ping'); if (r.ok) return '/api'; } catch {}
-      // 2) prova /.netlify/functions/api/ping (fallback se mancasse il redirect nel netlify.toml)
-      try { const r = await fetch('/.netlify/functions/api/ping'); if (r.ok) return '/.netlify/functions/api'; } catch {}
-      return null;
-    }
-
-    // ========== UTILS ==========
     const CURRENCY = new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR'});
+
     const el = id => document.getElementById(id);
-  function escapeHtml(str){
-      return String(str || '').replace(/[&<>"']/g, c => ({
-        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;'
-      }[c]));
+
+    const state = {
+      roommates: [],
+      expenses: [] // {id,payer,name,amount}
+    };
+
+    const STORAGE_KEY = 'splitCasa_v1';
+
+    function save(){
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
 
-
-    function parseAmount(v){ if(typeof v!=='string') return NaN; v=v.replace(/\\s+/g,'').replace(',', '.'); const num=parseFloat(v); return Number.isFinite(num)?Math.round(num*100)/100:NaN; }
-    function round2(x){ return Math.round(x*100)/100; }
-    function toast(msg){
-      const t = document.createElement('div'); t.textContent = msg;
-      t.style.position='fixed'; t.style.left='50%'; t.style.bottom='80px'; t.style.transform='translateX(-50%)';
-      t.style.background='rgba(17,24,39,.95)'; t.style.border='1px solid var(--border)'; t.style.color='#e5e7eb';
-      t.style.padding='10px 12px'; t.style.borderRadius='12px'; t.style.boxShadow='0 6px 20px rgba(0,0,0,.4)';
-      document.body.appendChild(t); setTimeout(()=>t.remove(),1600);
-    }
-
-    async function api(path, opts){
-      if(!API_BASE) throw new Error('API base non configurata');
-      const url = \`\${API_BASE}/\${path}?hid=\${encodeURIComponent(HID)}\`;
-      const r = await fetch(url, opts);
-      if(!r.ok){
-        const text = await r.text().catch(()=>r.statusText);
-        throw new Error(\`API error (\${r.status}): \${text}\`);
+    function load(){
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw){
+        try{ const data = JSON.parse(raw);
+          state.roommates = Array.isArray(data.roommates) ? data.roommates : [];
+          state.expenses = Array.isArray(data.expenses) ? data.expenses : [];
+        }catch(e){ console.warn('Parse storage',e) }
       }
-      const ct = r.headers.get('content-type')||'';
-      return ct.includes('application/json') ? r.json() : r.text();
+      if(state.roommates.length === 0){
+        state.roommates = ['faby','eve','mary'];
+        save();
+      }
     }
 
-    // ========== STATE ==========
-    const state = { roommates: [], expenses: [] }; // expenses: {id,payer,name,amount}
-
-    // ========== SERVER SYNC ==========
-    async function load(){
-      const data = await api('state', { method:'GET' });
-      state.roommates = Array.isArray(data.roommates) ? data.roommates : ['faby','eve','mary'];
-      state.expenses  = (data.expenses||[]).map(e => ({ id:e.id, payer:e.payer, name:e.name, amount:+e.amount }));
+    function renderPeople(){
+      const wrap = el('peopleChips');
+      wrap.innerHTML = '';
+      state.roommates.forEach((name, idx) => {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        const input = document.createElement('input');
+        input.value = name;
+        input.ariaLabel = `Rinomina ${name}`;
+        input.addEventListener('change', () => renamePerson(idx, input.value));
+        const btn = document.createElement('button');
+        btn.className = 'x';
+        btn.textContent = '×';
+        btn.title = 'Rimuovi';
+        btn.addEventListener('click', () => removePerson(idx));
+        chip.append(input, btn);
+        wrap.appendChild(chip);
+      });
+      // update payer select
+      const payer = el('payer');
+      payer.innerHTML = state.roommates.map(n => `<option value="${encodeURIComponent(n)}">${escapeHtml(n)}</option>`).join('');
     }
 
-    // ========== ROOMMATES ==========
-    async function addPerson(){
+    function escapeHtml(str){
+      return (str||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+    }
+
+    function addPerson(){
       const name = el('newPerson').value.trim();
       if(!name) return;
-      try{
-        await api('roommate-add', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ name }) });
-        el('newPerson').value='';
-        await load(); renderPeople(); renderAll();
-      }catch(e){ console.error(e); toast(e.message); }
+      if(state.roommates.includes(name)){
+        alert('Esiste già una coinquilina con questo nome.');
+        return;
+      }
+      state.roommates.push(name);
+      el('newPerson').value='';
+      save();
+      renderPeople();
+      renderAll();
     }
-    async function renamePerson(index, newName){
-      newName = newName.trim(); if(!newName) return renderPeople();
-      const old = state.roommates[index]; if(old === newName) return;
-      try{
-        await api('roommate-rename', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ oldName:old, newName }) });
-        await load(); renderPeople(); renderAll();
-      }catch(e){ console.error(e); toast(e.message); }
+
+    function renamePerson(index, newName){
+      newName = newName.trim();
+      if(!newName){ return renderPeople(); }
+      const old = state.roommates[index];
+      if(old === newName) return;
+      if(state.roommates.includes(newName)){
+        alert('Nome già presente. Scegli un nome diverso.');
+        return renderPeople();
+      }
+      state.roommates[index] = newName;
+      // update expenses payer names
+      state.expenses.forEach(e => { if(e.payer === old) e.payer = newName; });
+      save();
+      renderPeople();
+      renderAll();
     }
-    async function removePerson(index){
+
+    function removePerson(index){
       const name = state.roommates[index];
-      if(!confirm(\`Rimuovere \${name}?\`)) return;
-      try{
-        await api('roommate-remove', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ name }) });
-        await load(); renderPeople(); renderAll();
-      }catch(e){ console.error(e); toast(e.message); }
+      if(!confirm(`Rimuovere ${name}? Le sue spese rimarranno ma non saranno più collegate a una coinquilina.`)) return;
+      state.roommates.splice(index,1);
+      save();
+      renderPeople();
+      renderAll();
     }
 
-    // ========== EXPENSES ==========
-    async function addExpense(equalSplit=false){
-      const payer = decodeURIComponent((el('payer').value||''));
-      const name  = el('expenseName').value.trim();
-      let amount  = parseAmount(el('expenseAmount').value);
+    function parseAmount(v){
+      if(typeof v !== 'string') return NaN;
+      v = v.replace(/\s+/g,'').replace(',', '.');
+      const num = Number.parseFloat(v);
+      return Number.isFinite(num) ? Math.round(num * 100) / 100 : NaN;
+    }
+
+    function addExpense(equalSplit=false){
+      const payerSel = el('payer');
+      const payer = decodeURIComponent(payerSel.value || '');
+      const name = el('expenseName').value.trim();
+      let amount = parseAmount(el('expenseAmount').value);
+
       if(equalSplit && !amount) amount = 0;
-      if(!payer) return alert('Seleziona la coinquilina che ha pagato.');
-      if(!name)  return alert('Inserisci il nome della spesa.');
-      if(!Number.isFinite(amount) || amount <= 0) return alert('Importo non valido.');
-      try{
-        await api('expense-add', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ payer, name, amount }) });
-        el('expenseName').value=''; el('expenseAmount').value='';
-        await load(); renderAll();
-        if(equalSplit) toast('Spesa aggiunta. La ripartizione è nel riepilogo.');
-      }catch(e){ console.error(e); toast(e.message); }
-    }
-    async function deleteExpense(id){
-      if(!confirm('Eliminare questa spesa?')) return;
-      try{
-        await api('expense-delete', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ id }) });
-        await load(); renderAll();
-      }catch(e){ console.error(e); toast(e.message); }
+
+      if(!payer){ return alert('Seleziona la coinquilina che ha pagato.'); }
+      if(!name){ return alert('Inserisci il nome della spesa.'); }
+      if(!Number.isFinite(amount) || amount <= 0){ return alert('Inserisci un importo valido maggiore di 0.'); }
+
+      const id = cryptoRandomId();
+      state.expenses.push({id, payer, name, amount});
+      save();
+      el('expenseName').value='';
+      el('expenseAmount').value='';
+      renderAll();
+
+      if(equalSplit){
+        // Aggiunge righe “negative” per le altre per tracciare quota? No: non serve, la ripartizione è sul totale
+        toast('Spesa aggiunta. La ripartizione equa avverrà nel riepilogo.');
+      }
     }
 
-    // ========== RENDER ==========
-    function renderPeople(){
-      const wrap = el('peopleChips'); wrap.innerHTML = '';
-      state.roommates.forEach((name, idx) => {
-        const chip = document.createElement('div'); chip.className='chip';
-        const input = document.createElement('input'); input.value=name; input.ariaLabel = \`Rinomina \${name}\`;
-        input.addEventListener('change', () => renamePerson(idx, input.value));
-        const btn = document.createElement('button'); btn.className='x'; btn.textContent='×'; btn.title='Rimuovi';
-        btn.addEventListener('click', () => removePerson(idx));
-        chip.append(input, btn); wrap.appendChild(chip);
-      });
-      const payer = el('payer');
-      payer.innerHTML = state.roommates.map(n => \`<option value="\${encodeURIComponent(n)}">\${escapeHtml(n)}</option>\`).join('');
+    function cryptoRandomId(){
+      try{ return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)); }
+      catch{ return 'id_'+Math.random().toString(16).slice(2); }
     }
 
     function renderExpenses(){
       const list = el('expenseList');
+      // keep header
       list.innerHTML = '<div class="rowline head"><div>Payer</div><div>Nome</div><div>Importo</div><div></div></div>';
-      if(state.expenses.length === 0){ el('expenseEmpty').style.display='block'; }
-      else { el('expenseEmpty').style.display='none'; }
+
+      if(state.expenses.length === 0){
+        el('expenseEmpty').style.display='block';
+      }else{
+        el('expenseEmpty').style.display='none';
+      }
+
       state.expenses.forEach(exp => {
-        const row = document.createElement('div'); row.className='rowline';
+        const row = document.createElement('div');
+        row.className = 'rowline';
         const payer = document.createElement('div'); payer.textContent = exp.payer;
-        const name  = document.createElement('div'); name.textContent  = exp.name;
-        const amt   = document.createElement('div'); amt.textContent   = CURRENCY.format(exp.amount);
+        const name = document.createElement('div'); name.textContent = exp.name;
+        const amt = document.createElement('div'); amt.textContent = CURRENCY.format(exp.amount);
         const actions = document.createElement('div');
         const del = document.createElement('button'); del.className='x'; del.title='Elimina'; del.textContent='✕';
         del.addEventListener('click', ()=> deleteExpense(exp.id));
         actions.appendChild(del);
-        row.append(payer,name,amt,actions); list.appendChild(row);
+        row.append(payer,name,amt,actions);
+        list.appendChild(row);
       });
+    }
+
+    function deleteExpense(id){
+      if(!confirm('Eliminare questa spesa?')) return;
+      state.expenses = state.expenses.filter(e => e.id !== id);
+      save();
+      renderAll();
     }
 
     function computeSummary(){
       const totals = Object.fromEntries(state.roommates.map(n => [n, 0]));
       let total = 0;
-      state.expenses.forEach(e => { if(typeof totals[e.payer] !== 'number') totals[e.payer] = 0; totals[e.payer] += e.amount; total += e.amount; });
-      const perHead = total / (state.roommates.length || 1);
-      const net = {}; state.roommates.forEach(nm => { net[nm] = round2((totals[nm]||0) - perHead); });
+      state.expenses.forEach(e => {
+        if(typeof totals[e.payer] !== 'number') totals[e.payer] = 0; // payer potrebbe essere esterno
+        totals[e.payer] += e.amount;
+        total += e.amount;
+      });
+      const n = state.roommates.length || 1;
+      const perHead = total / n;
+      const net = {}; // pagato - quota
+      state.roommates.forEach(nm => { net[nm] = round2(totals[nm] - perHead); });
       return { totals, total, perHead, net };
     }
+
+    function round2(x){ return Math.round(x * 100) / 100; }
 
     function renderSummary(){
       const { totals, total, perHead, net } = computeSummary();
       el('totalPaid').textContent = CURRENCY.format(round2(total));
-      el('perHead').textContent   = CURRENCY.format(round2(perHead));
-      const tbody = el('summaryTable').querySelector('tbody'); tbody.innerHTML = '';
+      el('perHead').textContent = CURRENCY.format(round2(perHead));
+      const tbody = el('summaryTable').querySelector('tbody');
+      tbody.innerHTML = '';
       state.roommates.forEach(nm => {
         const tr = document.createElement('tr');
         const saldo = round2(net[nm]);
@@ -294,53 +341,147 @@
 
     function computeSettlements(){
       const { net } = computeSummary();
-      const debtors = [], creditors = [];
+      const debtors = []; // saldo negativo => deve dare
+      const creditors = []; // saldo positivo => deve ricevere
       Object.entries(net).forEach(([name, amount]) => {
         const v = round2(amount);
-        if(v < -0.005) debtors.push({name, amount: -v});
+        if(v < -0.005) debtors.push({name, amount: -v}); // amount to pay (positive)
         else if(v > 0.005) creditors.push({name, amount: v});
       });
-      debtors.sort((a,b)=>b.amount-a.amount);
+      // greedy two-pointer
+      debtors.sort((a,b)=>b.amount-a.amount); // grandi prima
       creditors.sort((a,b)=>b.amount-a.amount);
-      const moves = []; let i=0,j=0;
+      const moves = [];
+      let i=0,j=0;
       while(i<debtors.length && j<creditors.length){
-        const d = debtors[i], c = creditors[j];
+        const d = debtors[i];
+        const c = creditors[j];
         const x = round2(Math.min(d.amount, c.amount));
-        if(x>0){ moves.push({from:d.name, to:c.name, amount:x}); d.amount=round2(d.amount-x); c.amount=round2(c.amount-x); }
-        if(d.amount<=0.005) i++; if(c.amount<=0.005) j++;
+        if(x > 0){
+          moves.push({from:d.name, to:c.name, amount:x});
+          d.amount = round2(d.amount - x);
+          c.amount = round2(c.amount - x);
+        }
+        if(d.amount <= 0.005) i++;
+        if(c.amount <= 0.005) j++;
       }
       return moves;
     }
 
     function renderSettlements(){
-      const box = document.getElementById('settlements'); box.innerHTML='';
+      const box = document.getElementById('settlements');
+      box.innerHTML = '';
       const moves = computeSettlements();
-      if(moves.length===0){
-        const p = document.createElement('p'); p.className='empty'; p.textContent='Nessuna transazione necessaria: siete già pari.'; box.appendChild(p); return;
+      if(moves.length === 0){
+        const p = document.createElement('p');
+        p.className='empty';
+        p.textContent = 'Nessuna transazione necessaria: siete già pari.';
+        box.appendChild(p);
+        return;
       }
       moves.forEach(m => {
-        const li = document.createElement('div'); li.style.padding='8px 0';
+        const li = document.createElement('div');
+        li.style.padding='8px 0';
         li.innerHTML = `<strong>${escapeHtml(m.from)}</strong> deve dare <strong>${CURRENCY.format(m.amount)}</strong> a <strong>${escapeHtml(m.to)}</strong>`;
         box.appendChild(li);
       });
     }
 
-    function renderAll(){ renderExpenses(); renderSummary(); renderSettlements(); }
+    function renderAll(){
+      renderExpenses();
+      renderSummary();
+      renderSettlements();
+    }
 
-    // ========== BOOT ==========
-    document.addEventListener('DOMContentLoaded', async () => {
-      const badge = el('dbBadge'); badge.textContent = 'DB: connessione…';
-      API_BASE = await detectApiBase();
-      if(!API_BASE){
-        badge.textContent = 'DB: offline';
-        toast('API non raggiungibile. Controlla deploy Functions/redirect.');
-        console.error('Nessun endpoint API trovato. Prova /api/ping e /.netlify/functions/api/ping');
-        return; // blocco la UI per evitare “clic non fa nulla”
+    // Backup / export / import / reset
+    function exportData(){
+      const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'divisione-spese.json'; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function importData(file){
+      if(!file) return alert('Seleziona un file .json');
+      const reader = new FileReader();
+      reader.onload = () => {
+        try{
+          const data = JSON.parse(reader.result);
+          if(!Array.isArray(data.roommates) || !Array.isArray(data.expenses)) throw new Error('Formato non valido');
+          state.roommates = data.roommates;
+          state.expenses = data.expenses;
+          save();
+          renderPeople();
+          renderAll();
+          toast('Dati importati ✓');
+        }catch(e){ alert('Import fallito: '+e.message); }
+      };
+      reader.readAsText(file);
+    }
+
+    function resetAll(){
+      if(!confirm('Cancellare tutti i dati?')) return;
+      state.roommates = ['faby','eve','mary'];
+      state.expenses = [];
+      save();
+      renderPeople();
+      renderAll();
+    }
+
+    // UI helpers
+    function toast(msg){
+      const t = document.createElement('div');
+      t.textContent = msg;
+      t.style.position='fixed'; t.style.left='50%'; t.style.bottom='80px'; t.style.transform='translateX(-50%)';
+      t.style.background='rgba(17,24,39,.95)'; t.style.border='1px solid var(--border)'; t.style.color='var(--text)';
+      t.style.padding='10px 12px'; t.style.borderRadius='12px'; t.style.boxShadow='0 6px 20px rgba(0,0,0,.4)';
+      document.body.appendChild(t);
+      setTimeout(()=>{ t.remove(); }, 1700);
+    }
+
+    // Share
+    async function shareSummary(){
+      const { totals, total, perHead, net } = computeSummary();
+      const moves = computeSettlements();
+      let txt = 'Riepilogo spese casa\n\n';
+      txt += `Totale: ${CURRENCY.format(total)}\nPer testa: ${CURRENCY.format(perHead)}\n\n`;
+      state.roommates.forEach(nm => {
+        const saldo = net[nm];
+        txt += `${nm}: pagato ${CURRENCY.format(totals[nm]||0)}, saldo ${CURRENCY.format(saldo)}\n`;
+      });
+      txt += '\nTransazioni:\n';
+      if(moves.length===0) txt += 'Nessuna — siete pari.';
+      else moves.forEach(m => { txt += `${m.from} → ${m.to}: ${CURRENCY.format(m.amount)}\n`; });
+
+      if(navigator.share){
+        try{ await navigator.share({title:'Divisione spese', text:txt}); }
+        catch(e){ /* utente ha annullato */ }
+      }else{
+        // fallback copia
+        try{ await navigator.clipboard.writeText(txt); toast('Riepilogo copiato negli appunti'); }
+        catch{ alert(txt); }
       }
-      badge.textContent = 'DB: online';
+    }
 
-      try{ await load(); } catch(e){ console.error(e); toast(e.message); }
-      renderPeople(); renderAll();
+    // Add sample
+    function addSample(){
+      const sample = [
+        {payer:'faby', name:'Spesa supermercato', amount: 54.70},
+        {payer:'eve', name:'Internet', amount: 29.99},
+        {payer:'mary', name:'Detersivi', amount: 12.40},
+        {payer:'faby', name:'Elettricità', amount: 81.20}
+      ];
+      sample.forEach(s => state.expenses.push({id:cryptoRandomId(),...s}));
+      save();
+      renderAll();
+    }
+
+    // Event listeners
+    document.addEventListener('DOMContentLoaded', () => {
+      load();
+      renderPeople();
+      renderAll();
 
       el('addPersonBtn').addEventListener('click', addPerson);
       el('newPerson').addEventListener('keydown', e => { if(e.key==='Enter') addPerson(); });
@@ -351,75 +492,12 @@
 
       el('exportBtn').addEventListener('click', exportData);
       el('importBtn').addEventListener('click', ()=> importData(el('importFile').files[0]));
-      el('resetBtn').addEventListener('click', () => { if(confirm('Reset solo locale (non cancella il server).')){ state.roommates=['faby','eve','mary']; state.expenses=[]; renderPeople(); renderAll(); }});
+      el('resetBtn').addEventListener('click', resetAll);
 
       el('shareBtn').addEventListener('click', shareSummary);
-      el('addSample').addEventListener('click', async () => {
-        try{
-          const sample = [
-            {payer:'faby', name:'Spesa supermercato', amount:54.70},
-            {payer:'eve',  name:'Internet',           amount:29.99},
-            {payer:'mary', name:'Detersivi',          amount:12.40},
-            {payer:'faby', name:'Elettricità',        amount:81.20},
-          ];
-          for(const s of sample){
-            await api('expense-add',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(s)});
-          }
-          await load(); renderAll();
-        }catch(e){ console.error(e); toast(e.message); }
-      });
+      el('addSample').addEventListener('click', addSample);
       el('recomputeBtn').addEventListener('click', renderAll);
     });
-
-    // ========== SHARE ==========
-    async function shareSummary(){
-      const { totals, total, perHead, net } = computeSummary();
-      const moves = computeSettlements();
-      let txt = 'Riepilogo spese casa\n\n';
-      txt += `Totale: ${CURRENCY.format(total)}\nPer testa: ${CURRENCY.format(perHead)}\n\n`;
-      state.roommates.forEach(nm => { const saldo = net[nm]; txt += `${nm}: pagato ${CURRENCY.format(totals[nm]||0)}, saldo ${CURRENCY.format(saldo)}\n`; });
-      txt += '\nTransazioni:\n';
-      if(moves.length===0) txt += 'Nessuna — siete pari.'; else moves.forEach(m => { txt += `${m.from} → ${m.to}: ${CURRENCY.format(m.amount)}\n`; });
-      if(navigator.share){ try{ await navigator.share({title:'Divisione spese', text:txt}); } catch{} }
-      else { try{ await navigator.clipboard.writeText(txt); toast('Riepilogo copiato negli appunti'); } catch{ alert(txt); } }
-    }
-
-    // ========== BACKUP LOCALE (opzionale) ==========
-    function exportData(){
-      const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = 'divisione-spese.json'; a.click();
-      URL.revokeObjectURL(url);
-    }
-    function importData(file){
-      if(!file) return alert('Seleziona un file .json');
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try{
-          const data = JSON.parse(reader.result);
-          if(!Array.isArray(data.roommates) || !Array.isArray(data.expenses)) throw new Error('Formato non valido');
-          for(const r of data.roommates){
-            await api('roommate-add',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:r})});
-          }
-          for(const e of data.expenses){
-            await api('expense-add',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({payer:e.payer,name:e.name,amount:e.amount})});
-          }
-          await load(); renderPeople(); renderAll(); toast('Dati importati ✓');
-        }catch(e){ console.error(e); toast('Import fallito: '+e.message); }
-      };
-      reader.readAsText(file);
-    }
-    window.addEventListener('error', (e) => {
-  const msg = 'JS error: ' + (e.message || e.error?.message || 'sconosciuto');
-  console.error(e.error || e.message);
-  const t = document.createElement('div');
-  t.textContent = msg;
-  t.style.position='fixed'; t.style.left='50%'; t.style.bottom='20px'; t.style.transform='translateX(-50%)';
-  t.style.background='rgba(220,38,38,.95)'; t.style.border='1px solid #7f1d1d'; t.style.color='white';
-  t.style.padding='10px 12px'; t.style.borderRadius='12px'; t.style.boxShadow='0 6px 20px rgba(0,0,0,.4)';
-  document.body.appendChild(t); setTimeout(()=>t.remove(), 4000);
-});
-
   </script>
 </body>
 </html>
