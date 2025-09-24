@@ -1,1 +1,8 @@
 
+{
+  "name": "divisione-spese",
+  "private": true,
+  "dependencies": {
+    "@neondatabase/serverless": "^latest"
+  }
+}
