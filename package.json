@@ -1,8 +1,7 @@
-
 {
   "name": "divisione-spese",
   "private": true,
   "dependencies": {
-    "@neondatabase/serverless": "^latest"
+    "@neondatabase/serverless": "^0.9.0"
   }
 }
